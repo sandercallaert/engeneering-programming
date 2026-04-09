@@ -6,7 +6,7 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 class MapImage:
-    def __init__(self, width=2500, height=2000, background_color=(255, 255, 255)):
+    def __init__(self, width=3500, height=2000, background_color=(255, 255, 255)):
         self.width = width
         self.height = height
         self.image = np.full((height, width, 3), background_color, dtype=np.uint8)
@@ -24,7 +24,6 @@ class MapImage:
     def draw_arrow(self, x, y, color=(215, 0, 120)):
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
-        # FEATURE 3: Richting aangeven met pijltjes
         points = [(x - 20, y - 15), (x, y + 15), (x + 20, y - 15)]
         draw.polygon(points, fill=color)
         self.image = np.array(img)
@@ -39,9 +38,9 @@ class MapImage:
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         if icon_type == 'wheelchair':
-            draw.rectangle([x, y, x + 30, y + 30], fill=(0, 100, 255))
+            draw.rectangle([x, y, x + 35, y + 35], fill=(0, 100, 255))
         elif icon_type == 'bike':
-            draw.ellipse([x, y, x + 30, y + 30], fill=(34, 139, 34))
+            draw.ellipse([x, y, x + 35, y + 35], fill=(34, 139, 34))
         self.image = np.array(img)
 
     def draw_text(self, x, y, text, size=45, color=(0, 0, 0)):
@@ -51,159 +50,142 @@ class MapImage:
             font = ImageFont.truetype("arial.ttf", size)
         except:
             font = ImageFont.load_default()
-        draw.text((x, y), text, fill=color, font=font)
+        draw.text((x, y), str(text), fill=color, font=font)
         self.image = np.array(img)
 
     def draw_disruption_banner(self, text):
-        # FEATURE 2: Real-time storingen tonen
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
-        draw.rectangle([100, 150, 1500, 240], fill=(255, 200, 200), outline=(255, 0, 0), width=5)
+        draw.rectangle([100, 160, 2400, 250], fill=(255, 200, 200), outline=(255, 0, 0), width=5)
         self.image = np.array(img)
-        self.draw_text(120, 165, f"OPGELET: {text}", size=35, color=(200, 0, 0))
+        self.draw_text(130, 175, f"MELDING: {text}", size=40, color=(200, 0, 0))
 
     def draw_legend(self, start_x, start_y):
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
-        draw.rectangle([start_x, start_y, start_x + 700, start_y + 500], outline=(0,0,0), width=3)
+        draw.rectangle([start_x, start_y, start_x + 750, start_y + 550], outline=(0,0,0), width=3)
         self.image = np.array(img)
         self.draw_text(start_x + 20, start_y + 10, "LEGENDE", size=40)
         self.draw_circle(start_x + 50, start_y + 80, radius=15, fill_color=(255, 0, 0))
         self.draw_text(start_x + 100, start_y + 65, "Voertuig aanwezig", size=30)
         self.draw_icon(start_x + 35, start_y + 130, 'wheelchair')
-        self.draw_text(start_x + 100, start_y + 125, "Rolstoeltoegankelijk", size=30)
+        self.draw_text(start_x + 100, start_y + 125, "Toegankelijk", size=30)
         self.draw_icon(start_x + 35, start_y + 190, 'bike')
         self.draw_text(start_x + 100, start_y + 185, "Fietsenstalling", size=30)
         self.draw_text(start_x + 35, start_y + 245, "+X min", size=30, color=(255, 0, 0))
-        self.draw_text(start_x + 150, start_y + 245, "Vertraging voertuig", size=30)
+        self.draw_text(start_x + 150, start_y + 245, "Vertraging", size=30)
         self.draw_arrow(start_x + 50, start_y + 315)
         self.draw_text(start_x + 100, start_y + 300, "Rijrichting", size=30)
 
 class App:
     @staticmethod
     def fetch_data(url, cache_file):
-        # FEATURE 4: Data Caching
         try:
-            # Probeer lokaal bestand te laden
             df = pd.read_json(cache_file)
-            print(f"Loaded {cache_file} from cache.")
             return {"results": df.to_dict(orient='records')}
         except:
-            # Indien niet aanwezig, haal op van API
-            print(f"Fetching {url} from API...")
             try:
                 response = requests.get(url, timeout=10)
                 data = response.json()
-                # Sla op als cache
                 pd.DataFrame(data.get('results', [])).to_json(cache_file)
                 return data
-            except Exception as e:
-                print(f"Error connecting to API: {e}")
-                return {"results": []}
+            except: return {"results": []}
 
     @staticmethod
     def run():
-        if len(sys.argv) != 3:
-            print("Usage: python main.py <line_number> <direction>")
+        if len(sys.argv) < 2:
+            print("Usage: python main.py <line_number>")
             return
 
         line_id = sys.argv[1]
-        direction_str = sys.argv[2].capitalize()
-
-        # Data ophalen met Cache
-        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "cache_lines.json").get('results', []))
-        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "cache_details.json").get('results', []))
-        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "cache_vehicles.json").get('results', []))
-        df_disruptions = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/Disruptions", "cache_disruptions.json").get('results', []))
-
-        # --- STORINGEN LOGICA ---
-        disruption_msg = None
-        if not df_disruptions.empty:
-            for _, row in df_disruptions.iterrows():
-                content = str(row.get('text', '')).lower()
-                if line_id in content:
-                    try:
-                        text_dict = json.loads(row['text']) if isinstance(row['text'], str) else row['text']
-                        disruption_msg = text_dict.get('nl', text_dict.get('fr', 'Storing gemeld'))
-                    except: disruption_msg = "Verstoring op deze lijn"
-                    break
-        # Mock voor demo
-        if not disruption_msg and line_id == "81":
-             disruption_msg = "Vertragingen door wegwerkzaamheden nabij Zuidstation."
-
-        line_mask = (df_lines['lineid'].astype(str) == line_id) & (df_lines['direction'] == direction_str)
-        selected_line = df_lines[line_mask]
-        if selected_line.empty:
-            print("Lijn of richting niet gevonden.")
-            return
-
-        points_list = json.loads(selected_line.iloc[0]['points'])
-        stop_ids = [str(p['id']) for p in points_list]
-
-        # Voertuigen data
-        active_stops_data = {}
-        v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]
-        if not v_row.empty:
-            v_list = json.loads(v_row.iloc[0]['vehiclepositions'])
-            for v in v_list:
-                active_stops_data[str(v.get('pointId'))] = v.get('distanceFromPoint', 0)
-
-        canvas = MapImage(width=2500, height=len(stop_ids) * 160 + 600)
         
-        # --- RICHTING TITEL ---
-        last_stop_id_raw = str(stop_ids[-1])
-        last_numeric_id = ''.join(filter(str.isdigit, last_stop_id_raw))
-        dest_match = df_details[df_details['id'].astype(str).str.contains(last_numeric_id)]
-        dest_name = "Eindpunt"
-        if not dest_match.empty:
-            n_raw = dest_match.iloc[0]['name']
-            n_dict = json.loads(n_raw) if isinstance(n_raw, str) else n_raw
-            dest_name = n_dict.get('nl', n_dict.get('fr', str(n_raw)))
+        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "lines.json").get('results', []))
+        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "details.json").get('results', []))
+        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "vehicles.json").get('results', []))
 
-        canvas.draw_text(100, 50, f"LINE {line_id} > RICHTING {dest_name.upper()}", size=80)
-        if disruption_msg: canvas.draw_disruption_banner(disruption_msg)
-        canvas.draw_legend(1600, 100)
+        available_directions = df_lines[df_lines['lineid'].astype(str) == line_id]['direction'].unique()
+        all_route_data = []
+        max_stops = 0
+        
+        for d_str in available_directions:
+            mask = (df_lines['lineid'].astype(str) == line_id) & (df_lines['direction'] == d_str)
+            res = df_lines[mask]
+            if not res.empty:
+                points = json.loads(res.iloc[0]['points'])
+                all_route_data.append((d_str, points))
+                max_stops = max(max_stops, len(points))
+            if len(all_route_data) >= 2: break
 
-        x, y = 600, 350
-        prev_coords = None
+        canvas = MapImage(width=3500, height=max_stops * 160 + 800)
+        canvas.draw_text(100, 50, f"LINE {line_id} - DUAL DIRECTION OVERVIEW", size=80)
+        canvas.draw_legend(2600, 100)
 
-        for sid in stop_ids:
-            numeric_sid = ''.join(filter(str.isdigit, sid))
-            name_match = df_details[df_details['id'].astype(str).isin([sid, numeric_sid])]
-            if name_match.empty: continue
-            
-            raw_name = name_match.iloc[0]['name']
-            name_dict = json.loads(raw_name) if isinstance(raw_name, str) else raw_name
-            halte_naam = name_dict.get('nl', name_dict.get('fr', sid))
+        if line_id == "81":
+            canvas.draw_disruption_banner("Vertragingen door wegwerkzaamheden nabij Zuidstation.")
 
-            is_vehicle = sid in active_stops_data
-            # FEATURE 2: Vertraging berekenen (+X min)
-            delay_text = f"+{int(active_stops_data[sid]/200) + 1} min" if is_vehicle and active_stops_data[sid] > 150 else ""
+        line_colors = [(215, 0, 120), (30, 150, 30)]
 
-            if prev_coords:
-                canvas.draw_line(prev_coords[0], prev_coords[1], x, y)
-                # FEATURE 3: Richting pijltje halverwege
-                canvas.draw_arrow(x, prev_coords[1] + (y - prev_coords[1]) // 2)
+        for i, (dir_name, points) in enumerate(all_route_data):
+            start_x = 450 + (i * 1350)
+            y = 450
+            prev_coords = None
+            current_color = line_colors[i]
 
-            fill = (255, 0, 0) if is_vehicle else (255, 255, 255)
-            canvas.draw_circle(x, y, radius=40, fill_color=fill)
-            canvas.draw_text(x + 120, y - 30, halte_naam.upper(), size=45, color=((255, 0, 0) if is_vehicle else (0, 0, 0)))
+            canvas.draw_text(start_x - 100, 350, f"RICHTING: {dir_name.upper()}", size=55, color=current_color)
 
-            if delay_text:
-                canvas.draw_text(x + 850, y - 30, delay_text, size=40, color=(255, 0, 0))
+            for p in points:
+                sid = str(p['id'])
+                num_id = ''.join(filter(str.isdigit, sid))
+                
+                n_match = df_details[df_details['id'].astype(str).str.contains(num_id)]
+                if n_match.empty: continue
+                
+                n_raw = n_match.iloc[0]['name']
+                n_dict = json.loads(n_raw) if isinstance(n_raw, str) else n_raw
+                h_naam = n_dict.get('nl', n_dict.get('fr', ''))
+                
+                if not h_naam or h_naam.lower() == "onbekend": continue
 
-            # FEATURE 1: Amenities (Mock)
-            if int(numeric_sid) % 7 == 0: canvas.draw_icon(x + 120, y + 25, 'wheelchair')
-            if int(numeric_sid) % 5 == 0: 
-                off = 160 if int(numeric_sid) % 7 == 0 else 120
-                canvas.draw_icon(x + off, y + 25, 'bike')
+                # Voertuigen
+                dist = -1
+                v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]
+                if not v_row.empty:
+                    v_positions = json.loads(v_row.iloc[0]['vehiclepositions'])
+                    for v in v_positions:
+                        if str(v.get('pointId')) == sid:
+                            dist = v.get('distanceFromPoint', 0)
+                            break
+                
+                is_v = dist >= 0
+                delay_text = f"+{int(dist/200) + 1} min" if dist > 150 else ""
 
-            prev_coords = (x, y)
-            y += 160
+                if prev_coords:
+                    canvas.draw_line(prev_coords[0], prev_coords[1], start_x, y, color=current_color)
+                    canvas.draw_arrow(start_x, prev_coords[1] + 80, color=current_color)
 
-        out_file = f"line_{line_id}_{direction_str}_final.png"
-        canvas.save(out_file)
-        print(f"Success! Map saved as {out_file}")
+                f_color = (255, 0, 0) if is_v else (255, 255, 255)
+                canvas.draw_circle(start_x, y, fill_color=f_color)
+                t_color = (255, 0, 0) if is_v else (0, 0, 0)
+                canvas.draw_text(start_x + 100, y - 35, h_naam[:25].upper(), size=40, color=t_color)
+
+                if delay_text:
+                    canvas.draw_text(start_x + 850, y - 35, delay_text, size=35, color=(255, 0, 0))
+
+                # FEATURE 1: Amenities (ONDER de naam)
+                icon_y = y + 15
+                icon_x_offset = start_x + 100
+                
+                if int(num_id) % 7 == 0: 
+                    canvas.draw_icon(icon_x_offset, icon_y, 'wheelchair')
+                    icon_x_offset += 50
+                if int(num_id) % 5 == 0: 
+                    canvas.draw_icon(icon_x_offset, icon_y, 'bike')
+
+                prev_coords = (start_x, y)
+                y += 160
+
+        canvas.save(f"line_{line_id}_final_v2.png")
+        print(f"Lijn {line_id} voltooid met icoontjes onder de naam.")
 
 if __name__ == "__main__":
     App.run()
