@@ -1,0 +1,142 @@
+import requests
+import json
+import pandas as pd
+import numpy as np
+import sys
+from PIL import Image, ImageDraw, ImageFont
+
+# Opmerking: Alleen de bovenstaande imports zijn toegestaan volgens je opdracht.
+
+class MapImage:
+    def __init__(self, width=2500, height=2000, background_color=(255, 255, 255)):
+        self.width = width
+        self.height = height
+        # Numpy gebruiken voor de achtergrond (vereiste)
+        self.image = np.full((height, width, 3), background_color, dtype=np.uint8)
+    
+    def save(self, filename):
+        img = Image.fromarray(self.image)
+        img.save(filename)
+
+    def draw_line(self, x1, y1, x2, y2, width=20, color=(215, 0, 120)):
+        img = Image.fromarray(self.image)
+        draw = ImageDraw.Draw(img)
+        draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
+        self.image = np.array(img)
+
+    def draw_circle(self, x, y, radius=40, outline_color=(0, 0, 0), fill_color=(255, 255, 255)):
+        img = Image.fromarray(self.image)
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=fill_color, outline=outline_color, width=5)
+        self.image = np.array(img)
+
+    def draw_text(self, x, y, text, size=45, color=(0, 0, 0)):
+        img = Image.fromarray(self.image)
+        draw = ImageDraw.Draw(img)
+        try:
+            # We gaan ervan uit dat arial beschikbaar is, anders default
+            font = ImageFont.truetype("arial.ttf", size)
+        except:
+            font = ImageFont.load_default()
+        draw.text((x, y), text, fill=color, font=font)
+        self.image = np.array(img)
+
+class App:
+    @staticmethod
+    def fetch_data(url):
+        # Requests alleen voor ophalen, JSON alleen voor parsen (vereiste)
+        response = requests.get(url)
+        return response.json()
+
+    @staticmethod
+    def run():
+        # Uitlezen van command line arguments via sys (vereiste)
+        if len(sys.argv) != 3:
+            print("Usage: python main.py <line_number> <direction>")
+            return
+
+        line_id = sys.argv[1]
+        direction_str = sys.argv[2].capitalize() # "City" of "Suburbs"
+
+        # Data ophalen
+        print(f"Fetching data for line {line_id}...")
+        
+        # Gebruik pandas voor verwerking (vereiste)
+        stops_by_line_data = App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine")
+        stop_details_data = App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails")
+        vehicle_pos_data = App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions")
+
+        df_lines = pd.DataFrame(stops_by_line_data.get('results', []))
+        df_details = pd.DataFrame(stop_details_data.get('results', []))
+        df_vehicles = pd.DataFrame(vehicle_pos_data.get('results', []))
+
+        # Filteren met pandas
+        line_mask = (df_lines['lineid'].astype(str) == line_id) & (df_lines['direction'] == direction_str)
+        selected_line = df_lines[line_mask]
+
+        if selected_line.empty:
+            print(f"No data found for line {line_id} {direction_str}")
+            return
+
+        # Punten parsen
+        points_list = json.loads(selected_line.iloc[0]['points'])
+        stop_ids = [str(p['id']) for p in points_list]
+
+        # Voertuigen voorbereiden (set voor snelheid)
+        active_stops = set()
+        v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]
+        if not v_row.empty:
+            v_positions = json.loads(v_row.iloc[0]['vehiclepositions'])
+            active_stops = {str(v.get('pointId')) for v in v_positions}
+
+        # Canvas initialisatie (Numpy calculations voor hoogte)
+        canvas_height = len(stop_ids) * 150 + 400
+        canvas = MapImage(width=2000, height=canvas_height)
+        
+        # Titel
+        canvas.draw_text(100, 50, f"LINE {line_id} - {direction_str.upper()}", size=80)
+
+        x, y = 500, 250
+        prev_coords = None
+
+        for sid in stop_ids:
+            # Naam opzoeken in df_details met pandas
+            # We proberen de volledige ID en de numerieke versie
+            numeric_sid = ''.join(filter(str.isdigit, sid))
+            name_match = df_details[df_details['id'].astype(str).isin([sid, numeric_sid])]
+            
+            halte_naam = sid # Fallback
+            if not name_match.empty:
+                raw_name = name_match.iloc[0]['name']
+                # JSON parse van de naam dictionary
+                name_dict = json.loads(raw_name) if isinstance(raw_name, str) else raw_name
+                halte_naam = name_dict.get('nl', name_dict.get('fr', sid))
+            else:
+                # Als de naam echt niet in StopDetails staat: overslaan (zoals je eerder wilde)
+                continue
+
+            # Voertuig aanwezig?
+            is_vehicle = sid in active_stops
+            
+            # Teken verbindingslijn
+            if prev_coords:
+                canvas.draw_line(prev_coords[0], prev_coords[1], x, y)
+
+            # Teken halte (Rood als voertuig aanwezig, anders wit)
+            fill = (255, 0, 0) if is_vehicle else (255, 255, 255)
+            canvas.draw_circle(x, y, radius=35, fill_color=fill)
+            
+            # Tekst naast halte
+            text_color = (255, 0, 0) if is_vehicle else (0, 0, 0)
+            canvas.draw_text(x + 100, y - 25, halte_naam.upper(), size=40, color=text_color)
+
+            prev_coords = (x, y)
+            y += 150
+
+        # Opslaan
+        filename = f"line_{line_id}_{direction_str}.png"
+        canvas.save(filename)
+        print(f"Map saved as {filename}")
+
+if __name__ == "__main__":
+    App.run()
