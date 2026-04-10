@@ -3,25 +3,32 @@ import json
 import pandas as pd
 import numpy as np
 import sys
+import os
+import time
 from PIL import Image, ImageDraw, ImageFont
 
+# KLASSE VOOR HET GENEREREN VAN DE VISUELE KAART
 class MapImage:
     def __init__(self, width=3500, height=2000, background_color=(255, 255, 255)):
+        # Initialiseert een lege witte afbeelding met Numpy
         self.width = width
         self.height = height
         self.image = np.full((height, width, 3), background_color, dtype=np.uint8)
     
     def save(self, filename):
+        # Slaat de Numpy array op als een PNG afbeelding
         img = Image.fromarray(self.image)
         img.save(filename)
 
     def draw_line(self, x1, y1, x2, y2, width=20, color=(215, 0, 120)):
+        # Tekent de lijnverbindingen tussen de haltes
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
         self.image = np.array(img)
 
     def draw_arrow(self, x, y, color=(215, 0, 120)):
+        # Tekent pijlen om de rijrichting aan te geven (Extra Feature)
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         points = [(x - 20, y - 15), (x, y + 15), (x + 20, y - 15)]
@@ -29,12 +36,14 @@ class MapImage:
         self.image = np.array(img)
 
     def draw_circle(self, x, y, radius=40, outline_color=(0, 0, 0), fill_color=(255, 255, 255)):
+        # Tekent de haltes als cirkels
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=fill_color, outline=outline_color, width=5)
         self.image = np.array(img)
 
     def draw_icon(self, x, y, icon_type):
+        # Tekent iconen voor voorzieningen zoals rolstoelen, fietsen en treinen (Extra Feature)
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         if icon_type == 'wheelchair':
@@ -47,6 +56,7 @@ class MapImage:
         self.image = np.array(img)
 
     def draw_text(self, x, y, text, size=45, color=(0, 0, 0)):
+        # Plaatst tekst (namen, tijden, titels) op de kaart
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         try:
@@ -57,6 +67,7 @@ class MapImage:
         self.image = np.array(img)
 
     def draw_disruption_banner(self, text):
+        # Tekent een rode banner bovenaan bij storingen (Extra Feature)
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         draw.rectangle([100, 160, 2400, 250], fill=(255, 200, 200), outline=(255, 0, 0), width=5)
@@ -64,6 +75,7 @@ class MapImage:
         self.draw_text(130, 175, f"MELDING: {text}", size=40, color=(200, 0, 0))
 
     def draw_legend(self, start_x, start_y):
+        # Tekent de legende met uitleg over de gebruikte symbolen
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
         draw.rectangle([start_x, start_y, start_x + 850, start_y + 650], outline=(0,0,0), width=3)
@@ -80,9 +92,11 @@ class MapImage:
         self.draw_text(start_x + 35, start_y + 335, "+X min", size=30, color=(255, 0, 0))
         self.draw_text(start_x + 150, start_y + 335, "Vertraging", size=30)
 
+# HOOFDKLASSE VOOR LOGICA EN DATA
 class App:
     @staticmethod
     def get_train_info(station_name):
+        # Haalt live treintijden op bij iRail voor NMBS-stations (Extra Feature)
         try:
             clean_name = station_name.replace("STATION", "").replace("GARE", "").replace("BRUSSELS", "").strip()
             url = f"https://api.irail.be/liveboard/?station={clean_name}&format=json&lang=nl"
@@ -97,20 +111,36 @@ class App:
             return "NMBS Station"
 
     @staticmethod
-    def fetch_data(url, cache_file):
+    def fetch_data(url, cache_file, cache_duration=86400):
+        # Beheert het ophalen van data met slimme caching (Extra Feature)
+        is_live_data = "rt/VehiclePositions" in url
+        file_exists = os.path.exists(cache_file)
+        
+        # Gebruik lokale cache als deze nog geen 24 uur oud is
+        if not is_live_data and file_exists:
+            file_age = time.time() - os.path.getmtime(cache_file)
+            if file_age < cache_duration:
+                try:
+                    df = pd.read_json(cache_file)
+                    return {"results": df.to_dict(orient='records')}
+                except: pass
+
+        # Download nieuwe data van API als cache verouderd of afwezig is
         try:
-            df = pd.read_json(cache_file)
-            return {"results": df.to_dict(orient='records')}
-        except:
-            try:
-                response = requests.get(url, timeout=10)
-                data = response.json()
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            if not is_live_data:
                 pd.DataFrame(data.get('results', [])).to_json(cache_file)
-                return data
-            except: return {"results": []}
+            return data
+        except:
+            if file_exists:
+                df = pd.read_json(cache_file)
+                return {"results": df.to_dict(orient='records')}
+            return {"results": []}
 
     @staticmethod
     def get_stop_name(df_details, sid):
+        # Zoekt de Nederlandse naam van een halte op basis van het ID
         num_id = ''.join(filter(str.isdigit, str(sid)))
         n_match = df_details[df_details['id'].astype(str).str.contains(num_id)]
         if not n_match.empty:
@@ -121,13 +151,16 @@ class App:
 
     @staticmethod
     def run():
+        # Hoofdproces van de applicatie
         if len(sys.argv) < 2: return
         line_id = sys.argv[1]
         
+        # 1. Data laden via de cache-functie
         df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "lines.json").get('results', []))
         df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "details.json").get('results', []))
         df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "vehicles.json").get('results', []))
 
+        # 2. Richtingen van de lijn bepalen (Extra Feature: beide richtingen tonen)
         available_directions = df_lines[df_lines['lineid'].astype(str) == line_id]['direction'].unique()
         all_route_data = []
         max_stops = 0
@@ -141,7 +174,7 @@ class App:
                 max_stops = max(max_stops, len(points))
             if len(all_route_data) >= 2: break
 
-        # Dynamische Titel bepalen (Eerste halte van richting 1 en eerste halte van richting 2)
+        # 3. Canvas initialiseren en titel/legende tekenen
         start_name = App.get_stop_name(df_details, all_route_data[0][1][0]['id'])
         end_name = App.get_stop_name(df_details, all_route_data[0][1][-1]['id'])
         full_title = f"LINE {line_id}: {start_name} - {end_name}"
@@ -150,9 +183,11 @@ class App:
         canvas.draw_text(100, 50, full_title, size=85)
         canvas.draw_legend(2550, 100)
 
+        # Voorbeeld van storingsmelding (Extra Feature)
         if line_id == "81":
             canvas.draw_disruption_banner("Vertragingen door wegwerkzaamheden nabij Zuidstation.")
 
+        # 4. Per richting de haltes en verbindingen tekenen
         line_colors = [(215, 0, 120), (30, 150, 30)]
 
         for i, (dir_name, points) in enumerate(all_route_data):
@@ -168,7 +203,7 @@ class App:
                 h_naam = App.get_stop_name(df_details, sid)
                 if h_naam == "ONBEKEND": continue
 
-                # Voertuigen
+                # Voertuig- en vertragingslogica (Extra Feature)
                 v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]
                 dist = -1
                 if not v_row.empty:
@@ -180,10 +215,12 @@ class App:
                 is_v = dist >= 0
                 delay_text = f"+{int(dist/200) + 1} min" if dist > 150 else ""
 
+                # Teken verbindingslijn en richtingspijlen
                 if prev_coords:
                     canvas.draw_line(prev_coords[0], prev_coords[1], start_x, y, color=current_color)
                     canvas.draw_arrow(start_x, prev_coords[1] + 80, color=current_color)
 
+                # Teken de halte (rood als er een voertuig is)
                 f_color = (255, 0, 0) if is_v else (255, 255, 255)
                 canvas.draw_circle(start_x, y, fill_color=f_color)
                 t_color = (255, 0, 0) if is_v else (0, 0, 0)
@@ -192,12 +229,13 @@ class App:
                 if delay_text:
                     canvas.draw_text(start_x + 850, y - 35, delay_text, size=35, color=(255, 0, 0))
 
+                # Voeg NMBS info toe bij stations
                 if "STATION" in h_naam or "GARE" in h_naam:
                     canvas.draw_icon(start_x - 130, y - 15, 'train')
                     train_info = App.get_train_info(h_naam)
                     canvas.draw_text(start_x + 100, y + 15, train_info, size=30, color=(0, 51, 153))
 
-                # Amenities onder de naam
+                # Voeg voorzieningen iconen toe (Extra Feature)
                 icon_y = y + 55 if "STATION" in h_naam else y + 15
                 icon_x = start_x + 100
                 num_id = ''.join(filter(str.isdigit, sid))
@@ -210,8 +248,9 @@ class App:
                 prev_coords = (start_x, y)
                 y += 165
 
+        # 5. Resultaat opslaan
         canvas.save(f"line_{line_id}_final_titled.png")
-        print(f"Kaart voor lijn {line_id} gegenereerd met halte-titel.")
+        print(f"Kaart voor lijn {line_id} gegenereerd.")
 
 if __name__ == "__main__":
     App.run()
