@@ -1,11 +1,11 @@
-import requests
-import json
-import pandas as pd
-import numpy as np
-import sys
-import os
-import time
-from PIL import Image, ImageDraw, ImageFont
+import requests    # verbinding met het internet
+import json        #json = digitale woordenlijst, zet deze om in python formaat (dict of list)
+import pandas as pd    #data filteren
+import numpy as np     #afbeeldingen maken en kleuren
+import sys       #om info in de terminal mee te geven
+import os        #CACHE, communiceren met computer, bestand al gedownload en wanneer laatste keer opgeslagen
+import time      #CACHE, tijd tussen ophalen gegevens weten
+from PIL import Image, ImageDraw, ImageFont    #image = tekening maken en opslaan, draw = lijnen, cirkels, vierkanten, font = lettertype en grootte
 
 # KLASSE VOOR HET GENEREREN VAN DE VISUELE KAART
 class MapImage:
@@ -155,7 +155,7 @@ class App:
         if len(sys.argv) < 2: return
         line_id = sys.argv[1]
         
-        # 1. Data laden via de cache-functie
+        # 1. Data laden via de cache-functie (lijnen, details, voertuigen)
         df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "lines.json").get('results', []))
         df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "details.json").get('results', []))
         df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "vehicles.json").get('results', []))
