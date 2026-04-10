@@ -41,6 +41,9 @@ class MapImage:
             draw.rectangle([x, y, x + 35, y + 35], fill=(0, 100, 255))
         elif icon_type == 'bike':
             draw.ellipse([x, y, x + 35, y + 35], fill=(34, 139, 34))
+        elif icon_type == 'train':
+            draw.rectangle([x, y, x + 40, y + 25], fill=(0, 51, 153))
+            draw.rectangle([x + 5, y + 25, x + 35, y + 35], fill=(0, 51, 153))
         self.image = np.array(img)
 
     def draw_text(self, x, y, text, size=45, color=(0, 0, 0)):
@@ -63,21 +66,36 @@ class MapImage:
     def draw_legend(self, start_x, start_y):
         img = Image.fromarray(self.image)
         draw = ImageDraw.Draw(img)
-        draw.rectangle([start_x, start_y, start_x + 750, start_y + 550], outline=(0,0,0), width=3)
+        draw.rectangle([start_x, start_y, start_x + 850, start_y + 650], outline=(0,0,0), width=3)
         self.image = np.array(img)
         self.draw_text(start_x + 20, start_y + 10, "LEGENDE", size=40)
         self.draw_circle(start_x + 50, start_y + 80, radius=15, fill_color=(255, 0, 0))
         self.draw_text(start_x + 100, start_y + 65, "Voertuig aanwezig", size=30)
-        self.draw_icon(start_x + 35, start_y + 130, 'wheelchair')
-        self.draw_text(start_x + 100, start_y + 125, "Toegankelijk", size=30)
-        self.draw_icon(start_x + 35, start_y + 190, 'bike')
-        self.draw_text(start_x + 100, start_y + 185, "Fietsenstalling", size=30)
-        self.draw_text(start_x + 35, start_y + 245, "+X min", size=30, color=(255, 0, 0))
-        self.draw_text(start_x + 150, start_y + 245, "Vertraging", size=30)
-        self.draw_arrow(start_x + 50, start_y + 315)
-        self.draw_text(start_x + 100, start_y + 300, "Rijrichting", size=30)
+        self.draw_icon(start_x + 35, start_y + 130, 'train')
+        self.draw_text(start_x + 100, start_y + 125, "NMBS Verbinding", size=30)
+        self.draw_icon(start_x + 35, start_y + 200, 'wheelchair')
+        self.draw_text(start_x + 100, start_y + 195, "RolstoelToegankelijk", size=30)
+        self.draw_icon(start_x + 35, start_y + 270, 'bike')
+        self.draw_text(start_x + 100, start_y + 265, "Fietsenstalling", size=30)
+        self.draw_text(start_x + 35, start_y + 335, "+X min", size=30, color=(255, 0, 0))
+        self.draw_text(start_x + 150, start_y + 335, "Vertraging", size=30)
 
 class App:
+    @staticmethod
+    def get_train_info(station_name):
+        try:
+            clean_name = station_name.replace("STATION", "").replace("GARE", "").replace("BRUSSELS", "").strip()
+            url = f"https://api.irail.be/liveboard/?station={clean_name}&format=json&lang=nl"
+            response = requests.get(url, timeout=3)
+            data = response.json()
+            departures = data.get('departures', {}).get('departure', [])
+            if departures:
+                first = departures[0]
+                return f"Trein naar: {first['station']} ({first['time'][11:16]})"
+            return "NMBS Station: Zie dienstregeling"
+        except:
+            return "NMBS Station"
+
     @staticmethod
     def fetch_data(url, cache_file):
         try:
@@ -92,11 +110,18 @@ class App:
             except: return {"results": []}
 
     @staticmethod
-    def run():
-        if len(sys.argv) < 2:
-            print("Usage: python main.py <line_number>")
-            return
+    def get_stop_name(df_details, sid):
+        num_id = ''.join(filter(str.isdigit, str(sid)))
+        n_match = df_details[df_details['id'].astype(str).str.contains(num_id)]
+        if not n_match.empty:
+            n_raw = n_match.iloc[0]['name']
+            n_dict = json.loads(n_raw) if isinstance(n_raw, str) else n_raw
+            return n_dict.get('nl', n_dict.get('fr', 'STOP')).upper()
+        return "ONBEKEND"
 
+    @staticmethod
+    def run():
+        if len(sys.argv) < 2: return
         line_id = sys.argv[1]
         
         df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "lines.json").get('results', []))
@@ -116,9 +141,14 @@ class App:
                 max_stops = max(max_stops, len(points))
             if len(all_route_data) >= 2: break
 
-        canvas = MapImage(width=3500, height=max_stops * 160 + 800)
-        canvas.draw_text(100, 50, f"LINE {line_id} - DUAL DIRECTION OVERVIEW", size=80)
-        canvas.draw_legend(2600, 100)
+        # Dynamische Titel bepalen (Eerste halte van richting 1 en eerste halte van richting 2)
+        start_name = App.get_stop_name(df_details, all_route_data[0][1][0]['id'])
+        end_name = App.get_stop_name(df_details, all_route_data[0][1][-1]['id'])
+        full_title = f"LINE {line_id}: {start_name} - {end_name}"
+
+        canvas = MapImage(width=3500, height=max_stops * 165 + 850)
+        canvas.draw_text(100, 50, full_title, size=85)
+        canvas.draw_legend(2550, 100)
 
         if line_id == "81":
             canvas.draw_disruption_banner("Vertragingen door wegwerkzaamheden nabij Zuidstation.")
@@ -126,7 +156,7 @@ class App:
         line_colors = [(215, 0, 120), (30, 150, 30)]
 
         for i, (dir_name, points) in enumerate(all_route_data):
-            start_x = 450 + (i * 1350)
+            start_x = 450 + (i * 1400)
             y = 450
             prev_coords = None
             current_color = line_colors[i]
@@ -135,27 +165,18 @@ class App:
 
             for p in points:
                 sid = str(p['id'])
-                num_id = ''.join(filter(str.isdigit, sid))
-                
-                n_match = df_details[df_details['id'].astype(str).str.contains(num_id)]
-                if n_match.empty: continue
-                
-                n_raw = n_match.iloc[0]['name']
-                n_dict = json.loads(n_raw) if isinstance(n_raw, str) else n_raw
-                h_naam = n_dict.get('nl', n_dict.get('fr', ''))
-                
-                if not h_naam or h_naam.lower() == "onbekend": continue
+                h_naam = App.get_stop_name(df_details, sid)
+                if h_naam == "ONBEKEND": continue
 
                 # Voertuigen
-                dist = -1
                 v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]
+                dist = -1
                 if not v_row.empty:
-                    v_positions = json.loads(v_row.iloc[0]['vehiclepositions'])
-                    for v in v_positions:
+                    v_pos = json.loads(v_row.iloc[0]['vehiclepositions'])
+                    for v in v_pos:
                         if str(v.get('pointId')) == sid:
                             dist = v.get('distanceFromPoint', 0)
                             break
-                
                 is_v = dist >= 0
                 delay_text = f"+{int(dist/200) + 1} min" if dist > 150 else ""
 
@@ -166,26 +187,31 @@ class App:
                 f_color = (255, 0, 0) if is_v else (255, 255, 255)
                 canvas.draw_circle(start_x, y, fill_color=f_color)
                 t_color = (255, 0, 0) if is_v else (0, 0, 0)
-                canvas.draw_text(start_x + 100, y - 35, h_naam[:25].upper(), size=40, color=t_color)
+                canvas.draw_text(start_x + 100, y - 35, h_naam[:25], size=40, color=t_color)
 
                 if delay_text:
                     canvas.draw_text(start_x + 850, y - 35, delay_text, size=35, color=(255, 0, 0))
 
-                # FEATURE 1: Amenities (ONDER de naam)
-                icon_y = y + 15
-                icon_x_offset = start_x + 100
-                
+                if "STATION" in h_naam or "GARE" in h_naam:
+                    canvas.draw_icon(start_x - 130, y - 15, 'train')
+                    train_info = App.get_train_info(h_naam)
+                    canvas.draw_text(start_x + 100, y + 15, train_info, size=30, color=(0, 51, 153))
+
+                # Amenities onder de naam
+                icon_y = y + 55 if "STATION" in h_naam else y + 15
+                icon_x = start_x + 100
+                num_id = ''.join(filter(str.isdigit, sid))
                 if int(num_id) % 7 == 0: 
-                    canvas.draw_icon(icon_x_offset, icon_y, 'wheelchair')
-                    icon_x_offset += 50
+                    canvas.draw_icon(icon_x, icon_y, 'wheelchair')
+                    icon_x += 50
                 if int(num_id) % 5 == 0: 
-                    canvas.draw_icon(icon_x_offset, icon_y, 'bike')
+                    canvas.draw_icon(icon_x, icon_y, 'bike')
 
                 prev_coords = (start_x, y)
-                y += 160
+                y += 165
 
-        canvas.save(f"line_{line_id}_final_v2.png")
-        print(f"Lijn {line_id} voltooid met icoontjes onder de naam.")
+        canvas.save(f"line_{line_id}_final_titled.png")
+        print(f"Kaart voor lijn {line_id} gegenereerd met halte-titel.")
 
 if __name__ == "__main__":
     App.run()
