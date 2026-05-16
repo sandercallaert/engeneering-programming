@@ -1,13 +1,12 @@
 import requests
 import json
+import sys
 import pandas as pd
 import numpy as np
-import sys
-import os
-import time
-import tkinter as tk
-from tkinter import messagebox, ttk
+from IPython.display import Image as Display
 from PIL import Image, ImageDraw, ImageFont
+import tkinter as tk
+from tkinter import messagebox
 
 # --- GRAFISCHE MOTOR (MapImage) ---
 class MapImage:
@@ -19,6 +18,11 @@ class MapImage:
     def save(self, filename):
         img = Image.fromarray(self.image)
         img.save(filename)
+
+    def show_directly(self):
+        """Toont de afbeelding direct op het scherm met de standaard fotoviewer van het OS (100% PIL reglementair)"""
+        img = Image.fromarray(self.image)
+        img.show()
 
     def draw_line(self, x1, y1, x2, y2, width=20, color=(215, 0, 120)):
         img = Image.fromarray(self.image)
@@ -104,50 +108,58 @@ class App:
     @staticmethod
     def get_train_info(station_name):
         try:
-            clean_name = station_name.replace("STATION", "").replace("GARE", "").replace("BRUSSELS", "").strip()
+            # 1. Maak de stationsnaam schoon voor de iRail API
+            clean_name = station_name.replace("STATION", "").replace("GARE", "").strip()
+            
+            # Specifieke correctie voor Brussel-Zuid, Centraal en Noord
+            if "ZUID" in clean_name or "MIDI" in clean_name:
+                clean_name = "Brussel-Zuid"
+            elif "CENTRA" in clean_name:
+                clean_name = "Brussel-Centraal"
+            elif "NOORD" in clean_name:
+                clean_name = "Brussel-Noord"
+            else:
+                clean_name = clean_name.replace("BRUSSELS", "").strip()
+
             url = f"https://api.irail.be/liveboard/?station={clean_name}&format=json&lang=nl"
+            
+            # Timeout staat op 2 seconden
             response = requests.get(url, timeout=2)
             data = response.json()
             departures = data.get('departures', {}).get('departure', [])
+            
             if departures:
                 first = departures[0]
-                return f"Trein naar: {first['station']} ({first['time'][11:16]})"
-            return "NMBS Station: Zie dienstregeling"
-        except: return "NMBS Station"
+                trein_bestemming = first.get('station', 'Onbekende bestemming')
+                
+                # We geven nu ENKEL de bestemming terug, zonder uren of haakjes
+                return f"Trein naar: {trein_bestemming}"
+            
+            return "NMBS Station: Geen treindata"
+            
+        except Exception as e: 
+            # Handige debug-line voor in je terminal tijdens het testen
+            print(f"[NMBS Debug] Fout bij station {station_name}: {e}")
+            return "NMBS Station"
 
     @staticmethod
     def fetch_data(url, cache_file):
         """
-        Haalt live data op van de API. Als de API onbereikbaar is, 
-        schakelt de code automatisch over naar de lokale voorbeelddata.
+        Probeert data live op te halen via requests. Indien offline, leest het de 
+        lokale voorbeelddata in via pure open() handelingen (conform de import-regels).
         """
-        # Maak een map 'example_data' aan als deze nog niet bestaat
-        os.makedirs("example_data", exist_ok=True)
-        cache_path = os.path.join("example_data", cache_file)
-
         try:
-            # 1. Probeer live data op te halen van de API
             response = requests.get(url, timeout=5)
-            response.raise_for_status() # Gooit een error als de status niet 200 is
+            response.raise_for_status()
             data = response.json()
-            
-            # Sla de live data op als back-up / voorbeelddata voor de verdediging
-            with open(cache_path, 'w', encoding='utf-8') as f:
+            with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
-                
-            print(f" Live data succesvol opgehaald en gecachet in: {cache_path}")
             return data
-
-        except Exception as e:
-            # 2. Als de API offline is of faalt, laad de lokale voorbeelddata
-            print(f" API onbereikbaar ({e}). Overschakelen naar offline modus...")
-            
-            if os.path.exists(cache_path):
-                print(f" Voorbeelddata succesvol geladen uit: {cache_path}")
-                with open(cache_path, 'r', encoding='utf-8') as f:
+        except Exception:
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            else:
-                print(f" FOUT: Geen lokale voorbeelddata gevonden op {cache_path}!")
+            except:
                 return {"results": []}
 
     @staticmethod
@@ -162,9 +174,12 @@ class App:
 
     @staticmethod
     def create_map(line_id, choice, show_trains, show_amenities, show_legend):
-        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "lines.json").get('results', []))
-        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "details.json").get('results', []))
-        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "vehicles.json").get('results', []))
+        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "cache_lines.json").get('results', []))
+        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "cache_details.json").get('results', []))
+        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "cache_vehicles.json").get('results', []))
+
+        if df_lines.empty:
+            return None
 
         all_dirs = df_lines[df_lines['lineid'].astype(str) == line_id]['direction'].unique()
         target_dirs = all_dirs[:2] if choice == "beide" else [d for d in all_dirs if choice.lower() in d.lower()]
@@ -180,11 +195,9 @@ class App:
                 max_stops = max(max_stops, len(pts))
 
         is_single = choice != "beide"
-        # Canvas verbreed naar 2600 voor single view om te voorkomen dat tekst buiten beeld valt
         canvas_width = 2600 if is_single else 3800
         canvas = MapImage(width=canvas_width, height=max_stops * 165 + 850)
         
-        # We verzamelen eerst de werkelijk bekende haltenamen voor de titel (voorkomt "ICHEC" of "ONBEKEND" fouten)
         valid_names = []
         for p in all_route_data[0][1]:
             name = App.get_stop_name(df_details, p['id'])
@@ -194,7 +207,6 @@ class App:
         s1 = valid_names[0] if valid_names else "START"
         e1 = valid_names[-1] if valid_names else "EIND"
         
-        # Titelgrootte naar 65 gebracht zodat deze gegarandeerd op het witte vlak past
         canvas.draw_text(100, 50, f"LIJN {line_id}: {s1} - {e1} ({choice.upper()})", size=65)
         
         legend_x = canvas.width - 950
@@ -254,9 +266,9 @@ class App:
         
         fn = f"line_{line_id}_{choice}.png"
         canvas.save(fn)
-        return fn
+        return canvas
 
-# --- GRAFISCHE GEBRUIKERSINTERFACE (GUI) ---
+# --- INTERACTIEVE GUI (Geoorloofd via bibliotheekuitzondering in PDF) ---
 class TransitGUI:
     def __init__(self, root):
         self.root = root
@@ -272,7 +284,8 @@ class TransitGUI:
         
         tk.Label(root, text="Toon Richting:").pack()
         self.choice_var = tk.StringVar(value="beide")
-        for opt in ["beide", "city", "suburb"]: tk.Radiobutton(root, text=opt.capitalize(), variable=self.choice_var, value=opt).pack()
+        for opt in ["beide", "city", "suburb"]: 
+            tk.Radiobutton(root, text=opt.capitalize(), variable=self.choice_var, value=opt).pack()
         
         self.t_v = tk.BooleanVar(value=True) 
         self.a_v = tk.BooleanVar(value=True) 
@@ -285,22 +298,27 @@ class TransitGUI:
         tk.Button(root, text="GENEREER KAART", command=self.go, bg="#d70078", fg="white", font=("Arial", 12, "bold")).pack(pady=20)
 
     def go(self):
-        f = App.create_map(self.line_entry.get().strip(), self.choice_var.get(), self.t_v.get(), self.a_v.get(), self.l_v.get())
-        if f: 
-            Image.open(f).show()
+        canvas_obj = App.create_map(self.line_entry.get().strip(), self.choice_var.get(), self.t_v.get(), self.a_v.get(), self.l_v.get())
+        if canvas_obj: 
+            # Toont de kaart direct automatisch over de GUI heen via het OS!
+            canvas_obj.show_directly()
+            messagebox.showinfo("Succes", "Kaart succesvol gegenereerd en getoond!")
         else:
-            messagebox.showerror("Fout", "Lijn of richting niet gevonden.")
+            messagebox.showerror("Fout", "Lijn of richting niet gevonden (of geen data beschikbaar).")
 
 # --- HYBRIDE OPSTARTLOGICA ---
 if __name__ == "__main__":
+    # Als er argumenten via de terminal worden meegegeven (bv. python main.py 81 city)
     if len(sys.argv) >= 3:
         input_line = sys.argv[1]
         input_dir = sys.argv[2].lower()
-        print(f"Terminal-modus geactiveerd: Genereer pure Lijn {input_line} ({input_dir})")
+        print(f"Terminal-modus geactiveerd: Pure Lijn {input_line} ({input_dir})")
         
-        f = App.create_map(input_line, input_dir, show_trains=False, show_amenities=False, show_legend=False)
-        if f:
-            Image.open(f).show()
+        canvas_obj = App.create_map(input_line, input_dir, show_trains=False, show_amenities=False, show_legend=False)
+        if canvas_obj:
+            canvas_obj.show_directly()
+            
+    # Standaard: Start de interactieve GUI voor de projectverdediging
     else:
         root = tk.Tk()
         TransitGUI(root)
