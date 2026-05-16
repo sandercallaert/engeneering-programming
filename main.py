@@ -117,10 +117,38 @@ class App:
 
     @staticmethod
     def fetch_data(url, cache_file):
+        """
+        Haalt live data op van de API. Als de API onbereikbaar is, 
+        schakelt de code automatisch over naar de lokale voorbeelddata.
+        """
+        # Maak een map 'example_data' aan als deze nog niet bestaat
+        os.makedirs("example_data", exist_ok=True)
+        cache_path = os.path.join("example_data", cache_file)
+
         try:
-            response = requests.get(url, timeout=10)
-            return response.json()
-        except: return {"results": []}
+            # 1. Probeer live data op te halen van de API
+            response = requests.get(url, timeout=5)
+            response.raise_for_status() # Gooit een error als de status niet 200 is
+            data = response.json()
+            
+            # Sla de live data op als back-up / voorbeelddata voor de verdediging
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                
+            print(f" Live data succesvol opgehaald en gecachet in: {cache_path}")
+            return data
+
+        except Exception as e:
+            # 2. Als de API offline is of faalt, laad de lokale voorbeelddata
+            print(f" API onbereikbaar ({e}). Overschakelen naar offline modus...")
+            
+            if os.path.exists(cache_path):
+                print(f" Voorbeelddata succesvol geladen uit: {cache_path}")
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                print(f" FOUT: Geen lokale voorbeelddata gevonden op {cache_path}!")
+                return {"results": []}
 
     @staticmethod
     def get_stop_name(df_details, sid):
