@@ -135,9 +135,8 @@ class App:
             
             return "NMBS Station: Geen treindata"                                           
             
-        except Exception as e:                                                              #als API offline
-            print(f"[NMBS Debug] Fout bij station {station_name}: {e}")
-            return "NMBS Station"
+        except Exception:                                                              #als API offline
+            return "NMBS Station (Offline)"
 
     @staticmethod
     def fetch_data(url, cache_file):                                                        #caching-systeem (FEATURE)
@@ -168,9 +167,9 @@ class App:
 
     @staticmethod
     def create_map(line_id, choice, show_trains, show_amenities, show_legend,show_arrows=True):             #inladen 3 mivb datasets als overzichtelijke panda dataframes
-        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "cache_lines.json").get('results', []))
-        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "cache_details.json").get('results', []))
-        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "cache_vehicles.json").get('results', []))
+        df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "example_data/cache_lines.json").get('results', []))
+        df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "example_data/cache_details.json").get('results', []))
+        df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "example_data/cache_vehicles.json").get('results', []))
 
         if df_lines.empty:
             return None
