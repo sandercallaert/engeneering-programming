@@ -108,18 +108,18 @@ class MapImage:
 # --- APPLICATIE LOGICA ---(data onderzoek, API's, filteren en beslissen wat er getekend moet worden)
 class App:
     @staticmethod                                                                           #methode die logisch bij een klasse hoort geen toegang nodig heeft tot de instantie (self) of de klasse (cls) zelf.
-    def get_train_info(station_name):                                                       #ophalen NMBS-data
+    def get_train_info(station_name):                                                       #ophalen NMBS-data (FEATURE)
         try:
-            clean_name = station_name.replace("STATION", "").replace("GARE", "").strip()    #Maak de stationsnaam schoon voor de iRail API
+            clean_name = station_name.replace("STATION", "").replace("GARE", "").strip()    #Maak de stationsnaam schoon voor de iRail API, enkel namen zonder station erbij
 
-            if "ZUID" in clean_name or "MIDI" in clean_name:                                # Specifieke correctie voor Brussel-Zuid, Centraal en Noord
+            if "ZUID" in clean_name or "MIDI" in clean_name:                                # Specifieke correctie voor Brussel-Zuid, Centraal en Noord voor MIVB namen naar NMBS
                 clean_name = "Brussel-Zuid"
             elif "CENTRA" in clean_name:
                 clean_name = "Brussel-Centraal"
             elif "NOORD" in clean_name:
                 clean_name = "Brussel-Noord"
             else:
-                clean_name = clean_name.replace("BRUSSELS", "").strip()
+                clean_name = clean_name.replace("BRUSSELS", "").strip()                     #brussels verwijderen bij brussels airport bv
 
             url = f"https://api.irail.be/liveboard/?station={clean_name}&format=json&lang=nl"
             
@@ -167,7 +167,7 @@ class App:
         return "ONBEKEND"
 
     @staticmethod
-    def create_map(line_id, choice, show_trains, show_amenities, show_legend):              #inladen 3 mivb datasets als overzichtelijke panda dataframes
+    def create_map(line_id, choice, show_trains, show_amenities, show_legend,show_arrows=True):             #inladen 3 mivb datasets als overzichtelijke panda dataframes
         df_lines = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/stopsByLine", "cache_lines.json").get('results', []))
         df_details = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static/StopDetails", "cache_details.json").get('results', []))
         df_vehicles = pd.DataFrame(App.fetch_data("https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/rt/VehiclePositions", "cache_vehicles.json").get('results', []))
@@ -238,17 +238,18 @@ class App:
                 sid = str(p['id'])
                 h_naam = App.get_stop_name(df_details, sid)
                 if h_naam == "ONBEKEND": continue
-                
+
+                dist = -1
                 v_row = df_vehicles[df_vehicles['lineid'].astype(str) == line_id]           #doorzoeken live data of voertuig op deze lijn rijdt en onderweg naar spec. halte id
                 if not v_row.empty:
                     v_pos_list = json.loads(v_row.iloc[0]['vehiclepositions'])
                     for v in v_pos_list:
                         if str(v.get('pointId')) == sid: dist = v.get('distanceFromPoint', 0); break         #onthouden afstand in meter (dist)
-                dist = -1
                 
                 if prev_coords:
                     canvas.draw_line(prev_coords[0], prev_coords[1], start_x, y, color=current_color)       #verbindingslijn van vorige naar huidige halte met richtingspijl
-                    canvas.draw_arrow(start_x, prev_coords[1] + 80, color=current_color)
+                    if show_arrows:
+                        canvas.draw_arrow(start_x, prev_coords[1] + 80, color=current_color)
 
                 is_v = dist >= 0                                                                            #tekent halte cirkel, als er voertuig is (is_v), wordt halte rood
                 canvas.draw_circle(start_x, y, fill_color=((255, 0, 0) if is_v else (255, 255, 255)))
@@ -319,10 +320,10 @@ if __name__ == "__main__":
         input_dir = sys.argv[2].lower()
         print(f"Terminal-modus geactiveerd: Pure Lijn {input_line} ({input_dir})")
         
-        canvas_obj = App.create_map(input_line, input_dir, show_trains=False, show_amenities=False, show_legend=False)
+        canvas_obj = App.create_map(input_line, input_dir, show_trains=False, show_amenities=False, show_legend=False, show_arrows=False)
         if canvas_obj:
             canvas_obj.show_directly()
-    else:                                                                                    # Start de interactieve GUI voor de projectverdediging
+    else:                                                                                    # Start de interactieve GUI voor opdracht2
         root = tk.Tk()
         TransitGUI(root)
         root.mainloop()
